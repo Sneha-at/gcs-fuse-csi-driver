@@ -37,7 +37,10 @@ const (
 	FalseStr = "false"
 
 	// mount options that both CSI mounter and sidecar mounter should understand.
-	DisableMetricsForGKE = "disable-metrics-for-gke"
+	DisableMetricsForGKE                = "disable-metrics-for-gke"
+	VolumeContextKeyServiceAccountToken = "csi.storage.k8s.io/serviceAccount.tokens"
+	VolumeContextKeyPodName             = "csi.storage.k8s.io/pod.name"
+	VolumeContextKeyPodNamespace        = "csi.storage.k8s.io/pod.namespace"
 )
 
 var (

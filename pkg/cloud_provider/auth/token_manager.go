@@ -53,11 +53,15 @@ func (tm *tokenManager) GetIdentityProvider() string {
 }
 
 func (tm *tokenManager) GetTokenSourceFromK8sServiceAccount(saNamespace, saName, saToken string) oauth2.TokenSource {
-	return &GCPTokenSource{
+	gcpTokenSource := &GCPTokenSource{
 		meta:           tm.meta,
 		k8sSAName:      saName,
 		k8sSANamespace: saNamespace,
 		k8sSAToken:     saToken,
 		k8sClients:     tm.k8sClients,
 	}
+	if saNamespace != "" {
+		gcpTokenSource.k8sSANamespace = saNamespace
+	}
+	return gcpTokenSource
 }

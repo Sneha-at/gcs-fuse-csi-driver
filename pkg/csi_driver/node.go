@@ -325,7 +325,7 @@ func (s *nodeServer) isDirMounted(targetPath string) (bool, error) {
 
 // prepareStorageService prepares the GCS Storage Service using the Kubernetes Service Account from VolumeContext.
 func (s *nodeServer) prepareStorageService(ctx context.Context, vc map[string]string) (storage.Service, error) {
-	ts := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName], vc[VolumeContextKeyServiceAccountToken])
+	ts := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(vc[util.VolumeContextKeyPodNamespace], vc[util.VolumeContextKeyServiceAccountName], vc[util.VolumeContextKeyServiceAccountToken])
 	storageService, err := s.storageServiceManager.SetupService(ctx, ts)
 	if err != nil {
 		return nil, fmt.Errorf("storage service manager failed to setup service: %w", err)

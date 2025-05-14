@@ -18,6 +18,9 @@ limitations under the License.
 package main
 
 import (
+	"GoogleCloudPlatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
+	"GoogleCloudPlatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
+	"GoogleCloudPlatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"context"
 	"flag"
 	"fmt"
@@ -28,6 +31,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	sidecarmounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/sidecar_mounter"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
@@ -67,6 +71,21 @@ func main() {
 		fileContent := string(machineTypeBytes)
 		flagsFromDriver = driver.ParseFlagMapFromFlagFile(fileContent)
 	}
+	clientset, err := clientset.New(*kubeconfigPath, *informerResyncDurationSec)
+	if err != nil {
+		klog.Fatalf("Failed to configure k8s client: %v", err)
+	}
+
+	meta, err := metadata.NewMetadataService(*identityPool, *identityProvider)
+	if err != nil {
+		klog.Fatalf("Failed to set up metadata service: %v", err)
+	}
+
+	tm := auth.NewTokenManager(meta, clientset)
+	ssm, err := storage.NewGCSServiceManager()
+	if err != nil {
+		klog.Fatalf("Failed to set up storage service manager: %v", err)
+	}
 
 	for _, sp := range socketPaths {
 		klog.V(4).Infof("in sidecar mounter, found socket path %s", sp)
@@ -76,7 +95,7 @@ func main() {
 		time.Sleep(1500 * time.Millisecond)
 		mc := sidecarmounter.NewMountConfig(sp, flagsFromDriver)
 		if mc != nil {
-			if err := mounter.Mount(ctx, mc); err != nil {
+			if err := mounter.Mount(ctx, mc, ssm, tm); err != nil {
 				mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to mount bucket %q for volume %q: %v\n", mc.BucketName, mc.VolumeName, err))
 			}
 		}

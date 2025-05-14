@@ -39,6 +39,7 @@ import (
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/option"
 	"google.golang.org/api/sts/v1"
@@ -61,6 +62,14 @@ func New(mounterPath string) *Mounter {
 	}
 }
 
+func startStorageServiceWithRetry(k8sToken string){
+	var saMap map[string]string
+	saMap[util.VolumeContextKeyServiceAccountName] = webhook.SidecarContainerSATokenVolumeName
+	
+
+	})
+}
+
 func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	// Start the token server for HostNetwork enabled pods.
 	// For managed sidecar, the token server identity provider is only populated when host network pod ksa feature is opted in.
@@ -71,9 +80,31 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 		} else {
 			return fmt.Errorf("HostNetwork Pod KSA feature is opted in, but token server identity provider is not set. Please set it in VolumeAttributes")
 		}
+		stsToken, err := fetchStsToken(ctx, mc.TokenServerIdentityProvider)
+		if err != nil {
+			klog.Errorf("errored while fetching token")
+		}
+	}
+	k8stoken, err := getK8sTokenFromFile(webhook.SidecarContainerSATokenVolumeMountPath + "/" + webhook.K8STokenPath)
+	if err != nil {
+		klog.Errorf("failed to get k8s token from path %v", err)
+	}
+	storageService, err := s.prepareStorageServiceWithRetry(ctx, saMap)
+	if err != nil {
+		return nil, status.Errorf(codes.Unauthenticated, "failed to prepare storage service: %v", err)
 	}
 
+	if exist, err := storageService.CheckBucketExists(ctx, &storage.ServiceBucket{Name: bucketName}); !exist {
+		return nil, status.Errorf(storage.ParseErrCode(err), "failed to get GCS bucket %q: %v", bucketName, err)
+	}
+
+	vs.BucketAccessCheckPassed = true
+
+
 	klog.Infof("start to mount bucket %q for volume %q", mc.BucketName, mc.VolumeName)
+
+
+	saMap[util.VolumeContextKeyServiceAccountToken] = k8stoken
 
 	if err := os.MkdirAll(mc.BufferDir+TempDir, os.ModePerm); err != nil {
 		return fmt.Errorf("failed to create temp dir %q: %w", mc.BufferDir+TempDir, err)
@@ -366,6 +397,64 @@ func getAudienceFromContextAndIdentityProvider(ctx context.Context, identityProv
 	return audience, nil
 }
 
+func fetchStsToken(ctx context.Context, identityProvider string) (*oauth2.Token, error) {
+	var stsToken *oauth2.Token
+	k8stoken, err := getK8sTokenFromFile(webhook.SidecarContainerSATokenVolumeMountPath + "/" + webhook.K8STokenPath)
+	if err != nil {
+		klog.Errorf("failed to get k8s token from path %v", err)
+		return nil, err
+	}
+	stsToken, err = fetchIdentityBindingToken(ctx, k8stoken, identityProvider)
+	if err != nil {
+		klog.Errorf("failed to get sts token from path %v", err)
+		return nil, err
+	}
+
+	cacheStsToken(stsToken)
+	return stsToken, nil
+}
+
+func cacheStsToken() {
+lw := &cache.ListWatch{
+    ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
+        return client.CoreV1().Pods("").List(context.TODO(), options)
+    },
+    WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+        return client.CoreV1().Pods("").Watch(context.TODO(), options)
+    },
+}
+
+informer := cache.NewSharedInformer(
+    lw,
+    & 
+    0, // resync period
+)
+	)
+}
+
+func getStsTokenWithRetry(ctx context.Context, kubeClient *kubernetes.Clientset, nodeName string) (*v1.Node, error) {
+	var nodeObj *v1.Node
+	backoff := wait.Backoff{
+		Duration: 1 * time.Second,
+		Factor:   2.0,
+		Steps:    5,
+	}
+	err := wait.ExponentialBackoffWithContext(ctx, backoff, func(_ context.Context) (bool, error) {
+		node, err := kubeClient.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+		if err != nil {
+			klog.Warningf("Error getting node %s: %v, retrying...\n", nodeName, err)
+			return false, nil
+		}
+		nodeObj = node
+		klog.V(4).Infof("Successfully retrieved node info %s\n", nodeName)
+		return true, nil
+	})
+
+	if err != nil {
+		klog.Errorf("Failed to get node %s after retries: %v\n", nodeName, err)
+	}
+	return nodeObj, err
+
 func StartTokenServer(ctx context.Context, tokenURLBasePath, tokenSocketName, identityProvider string) {
 	// Clean up any stale socket file before creating a new one.
 	err := util.CheckAndDeleteStaleFile(tokenURLBasePath, tokenSocketName)
@@ -389,21 +478,12 @@ func StartTokenServer(ctx context.Context, tokenURLBasePath, tokenSocketName, id
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
-		k8stoken, err := getK8sTokenFromFile(webhook.SidecarContainerSATokenVolumeMountPath + "/" + webhook.K8STokenPath)
-		var stsToken *oauth2.Token
+		stsToken, err := fetchStsToken(ctx, identityProvider)
 		if err != nil {
-			klog.Errorf("failed to get k8s token from path %v", err)
-			w.WriteHeader(http.StatusInternalServerError)
-
-			return
+			klog.Errorf("failed to fetch STS token, got err %q", err)
 		}
-		stsToken, err = fetchIdentityBindingToken(ctx, k8stoken, identityProvider)
-		if err != nil {
-			klog.Errorf("failed to get sts token from path %v", err)
-			w.WriteHeader(http.StatusInternalServerError)
 
-			return
-		}
+		cacheStsToken(stsToken)
 		// Marshal the oauth2.Token object to JSON
 		jsonToken, err := json.Marshal(stsToken)
 		if err != nil {
@@ -427,3 +507,71 @@ func StartTokenServer(ctx context.Context, tokenURLBasePath, tokenSocketName, id
 		klog.Errorf("Server for %q returns unexpected error: %v", tokenURLSocketPath, err)
 	}
 }
+
+// prepareStorageService prepares the GCS Storage Service using the Kubernetes Service Account from VolumeContext.
+func (m *mounter) prepareStorageServiceWithRetry(ctx context.Context, vc map[string]string) (storage.Service, error) {
+	backoff := wait.Backoff{
+		Duration: 1 * time.Second,
+		Factor:   2.0,
+		Steps:    5,
+	}
+	err := wait.ExponentialBackoffWithContext(ctx, backoff, func(_ context.Context) (bool, storage.Service, error) {
+	ts := m.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(vc[util.VolumeContextKeyPodNamespace], vc[util.VolumeContextKeyServiceAccountName], vc[util.VolumeContextKeyServiceAccountToken])
+	storageService, err := s.storageServiceManager.SetupService(ctx, ts)
+	if err != nil {
+		klog.Warningf("Failed to setup storage service for namespace %v, service account %s, retrying...", util.VolumeContextKeyPodNamespace, util.VolumeContextKeyServiceAccountName)
+		return false, nil, nil
+	}
+	klog.V(4).Infof("Successfully setup storage service")
+	return true, storageService, nil
+	})
+	
+	return storageService
+}
+
+// func fetchIdentityBindingTokenWithRetry(ctx context.Context, k8sSAToken string, identityProvider string) (*oauth2.Token, error) {
+// 	stsService, err := sts.NewService(ctx, option.WithHTTPClient(&http.Client{}))
+// 	if err != nil {
+// 		return nil, fmt.Errorf("new STS service error: %w", err)
+// 	}
+
+// 	audience, err := getAudienceFromContextAndIdentityProvider(ctx, identityProvider)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to get audience from the context: %w", err)
+// 	}
+
+// 	stsRequest := &sts.GoogleIdentityStsV1ExchangeTokenRequest{
+// 		Audience:           audience,
+// 		GrantType:          "urn:ietf:params:oauth:grant-type:token-exchange",
+// 		Scope:              credentials.DefaultAuthScopes()[0],
+// 		RequestedTokenType: "urn:ietf:params:oauth:token-type:access_token",
+// 		SubjectTokenType:   "urn:ietf:params:oauth:token-type:jwt",
+// 		SubjectToken:       k8sSAToken,
+// 	}
+
+// 	backoff := wait.Backoff{
+// 		Duration: 1 * time.Second,
+// 		Factor:   2.0,
+// 		Steps:    5,
+// 	}
+// 	var stsToken *sts.GoogleIdentityStsV1ExchangeTokenResponse
+// 	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(_ context.Context) (bool, error) {
+
+// 		stsResponse, err := stsService.V1.Token(stsRequest).Do()
+// 		if err != nil {
+// 			klog.Errorf("IdentityBindingToken exchange error with audience %q: %w, retrying...", audience, err)
+// 			return false, nil
+// 		}
+// 		stsToken = stsResponse
+// 		klog.Infof("Got the STS token successfully")
+// 		return true, nil
+// 	})
+// 	if err != nil || stsToken == nil {
+// 		return nil, fmt.Errorf("IdentityBindingToken exchange error with audience %q: %w, no more retires permitted, got token %q", audience, err, stsToken)
+// 	}
+// 	return &oauth2.Token{
+// 		AccessToken: stsToken.AccessToken,
+// 		TokenType:   stsToken.TokenType,
+// 		Expiry:      time.Now().Add(time.Second * time.Duration(stsToken.ExpiresIn)),
+// 	}, nil
+// }
