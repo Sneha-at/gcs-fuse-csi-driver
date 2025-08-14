@@ -29,6 +29,7 @@ import (
 	"cloud.google.com/go/storage"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/option"
 	sts "google.golang.org/api/sts/v1"
@@ -55,7 +56,7 @@ func (ts *GCPTokenSource) Token() (*oauth2.Token, error) {
 		return nil, fmt.Errorf("k8s service account token fetch error: %w", err)
 	}
 
-	identityBindingToken, err := ts.fetchIdentityBindingToken(ctx, k8sSAToken)
+	identityBindingToken, err := ts.FetchIdentityBindingToken(ctx, k8sSAToken, "" /* Don't have to send identity provider for workload identity*/)
 	if err != nil {
 		return nil, fmt.Errorf("identity binding token fetch error: %w", err)
 	}
@@ -64,7 +65,7 @@ func (ts *GCPTokenSource) Token() (*oauth2.Token, error) {
 	if err != nil {
 		return nil, fmt.Errorf("GCP service account token fetch error: %w", err)
 	}
-
+	token.Valid()
 	return token, nil
 }
 
@@ -108,17 +109,25 @@ func (ts *GCPTokenSource) fetchK8sSAToken(ctx context.Context) (*oauth2.Token, e
 
 // fetch GCP IdentityBindingToken using the Kubernetes Service Account token
 // by calling Security Token Service (STS) API.
-func (ts *GCPTokenSource) fetchIdentityBindingToken(ctx context.Context, k8sSAToken *oauth2.Token) (*oauth2.Token, error) {
+func (ts *GCPTokenSource) FetchIdentityBindingToken(ctx context.Context, k8sSAToken *oauth2.Token, identityProvider string) (*oauth2.Token, error) {
 	stsService, err := sts.NewService(ctx, option.WithHTTPClient(&http.Client{}))
 	if err != nil {
 		return nil, fmt.Errorf("new STS service error: %w", err)
 	}
+	var audience string
+	if identityProvider != "" {
+		audience, err := util.GetAudienceFromContextAndIdentityProvider(ctx, identityProvider)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get audience from the context: %w", err)
+		}
+	} else {
+		audience = fmt.Sprintf(
+			"identitynamespace:%s:%s",
+			ts.meta.GetIdentityPool(),
+			ts.meta.GetIdentityProvider(),
+		)
+	}
 
-	audience := fmt.Sprintf(
-		"identitynamespace:%s:%s",
-		ts.meta.GetIdentityPool(),
-		ts.meta.GetIdentityProvider(),
-	)
 	stsRequest := &sts.GoogleIdentityStsV1ExchangeTokenRequest{
 		Audience:           audience,
 		GrantType:          "urn:ietf:params:oauth:grant-type:token-exchange",

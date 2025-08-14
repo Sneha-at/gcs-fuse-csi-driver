@@ -91,7 +91,6 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	klog.V(6).Infof("NodePublishVolume on volume %q has skipBucketAccessCheck %t", bucketName, skipBucketAccessCheck)
 
 	if err := s.driver.validateVolumeCapabilities([]*csi.VolumeCapability{req.GetVolumeCapability()}); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
@@ -133,7 +132,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Check if the sidecar container was injected into the Pod
-	pod, err := s.k8sClients.GetPod(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyPodName])
+	pod, err := s.k8sClients.GetPod(vc[util.VolumeContextKeyPodNamespace], vc[util.VolumeContextKeyPodName])
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "failed to get pod: %v", err)
 	}
@@ -147,6 +146,13 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		}
 		klog.V(6).Infof("NodePublishVolume populating identity provider %q in mount options", identityProvider)
 		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"hnw-ksa=true", "token-server-identity-provider=" + identityProvider})
+	}
+
+	if s.driver.config.EnableSidecarBucketAccessCheckFlag {
+		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{
+			"pod-namespace=" + vc[util.VolumeContextKeyPodNamespace],
+			"service-account-name=" + vc[util.VolumeContextKeyServiceAccountName],
+			"enable-sidecar-bucket-access-check=" + strconv.FormatBool(s.driver.config.EnableSidecarBucketAccessCheckFlag)})
 	}
 
 	node, err := s.k8sClients.GetNode(s.driver.config.NodeID)

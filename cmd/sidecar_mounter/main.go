@@ -39,9 +39,13 @@ import (
 )
 
 var (
-	gcsfusePath    = flag.String("gcsfuse-path", "/gcsfuse", "gcsfuse path")
-	volumeBasePath = flag.String("volume-base-path", webhook.SidecarContainerTmpVolumeMountPath+"/.volumes", "volume base path")
-	_              = flag.Int("grace-period", 0, "grace period for gcsfuse termination. This flag has been deprecated, has no effect and will be removed in the future.")
+	gcsfusePath               = flag.String("gcsfuse-path", "/gcsfuse", "gcsfuse path")
+	volumeBasePath            = flag.String("volume-base-path", webhook.SidecarContainerTmpVolumeMountPath+"/.volumes", "volume base path")
+	_                         = flag.Int("grace-period", 0, "grace period for gcsfuse termination. This flag has been deprecated, has no effect and will be removed in the future.")
+	kubeconfigPath            = flag.String("kubeconfig-path", "", "The kubeconfig path.")
+	identityPool              = flag.String("identity-pool", "", "The Identity Pool to authenticate with GCS API.")
+	identityProvider          = flag.String("identity-provider", "", "The Identity Provider to authenticate with GCS API.")
+	informerResyncDurationSec = flag.Int("informer-resync-duration-sec", 1800, "informer resync duration in seconds")
 	// This is set at compile time.
 	version = "unknown"
 )
@@ -57,20 +61,6 @@ func main() {
 		klog.Fatalf("failed to look up socket paths: %v", err)
 	}
 
-	mounter := sidecarmounter.New(*gcsfusePath)
-	ctx, cancel := context.WithCancel(context.Background())
-
-	flagsFromDriver := map[string]string{}
-	defaultingFlagFilePath := *volumeBasePath + "/" + driver.FlagFileForDefaultingPath
-	klog.Infof("Checking if defaulting-flag file %q exists", defaultingFlagFilePath)
-	if _, err := os.Stat(defaultingFlagFilePath); err == nil {
-		machineTypeBytes, err := os.ReadFile(defaultingFlagFilePath)
-		if err != nil {
-			klog.Fatalf("failed to read defaulting-flag file: %v", err)
-		}
-		fileContent := string(machineTypeBytes)
-		flagsFromDriver = driver.ParseFlagMapFromFlagFile(fileContent)
-	}
 	clientset, err := clientset.New(*kubeconfigPath, *informerResyncDurationSec)
 	if err != nil {
 		klog.Fatalf("Failed to configure k8s client: %v", err)
@@ -86,16 +76,31 @@ func main() {
 	if err != nil {
 		klog.Fatalf("Failed to set up storage service manager: %v", err)
 	}
+	mounter := sidecarmounter.New(*gcsfusePath, tm, ssm)
+	ctx, cancel := context.WithCancel(context.Background())
 
+	defaultingFlagFilePath := *volumeBasePath + "/" + driver.FlagFileForDefaultingPath
+	klog.Infof("Checking if defaulting-flag file %q exists", defaultingFlagFilePath)
+	err, defaultingFlagsFromDriver := fetchMapFromFilePath(defaultingFlagFilePath)
+	if err != nil {
+		klog.Fatalf("error reading file content for %s, got err %v", defaultingFlagFilePath, err)
+	}
+
+	// sidecarFlagFilePath := *volumeBasePath + "/" + driver.SidecarFlagFilePath
+	// klog.Infof("Checking if sidecar-driver flag file %q exists", sidecarFlagFilePath)
+	// err, sidecarFlagsFromDriver := fetchMapFromFilePath(sidecarFlagFilePath)
+	// if err != nil {
+	// 	klog.Fatalf("error reading file content for %s, got err %v", sidecarFlagFilePath, err)
+	// }
 	for _, sp := range socketPaths {
 		klog.V(4).Infof("in sidecar mounter, found socket path %s", sp)
 		// sleep 1.5 seconds before launch the next gcsfuse to avoid
 		// 1. different gcsfuse logs mixed together.
 		// 2. memory usage peak.
 		time.Sleep(1500 * time.Millisecond)
-		mc := sidecarmounter.NewMountConfig(sp, flagsFromDriver)
+		mc := sidecarmounter.NewMountConfig(sp, defaultingFlagsFromDriver)
 		if mc != nil {
-			if err := mounter.Mount(ctx, mc, ssm, tm); err != nil {
+			if err := mounter.Mount(ctx, mc); err != nil {
 				mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to mount bucket %q for volume %q: %v\n", mc.BucketName, mc.VolumeName, err))
 			}
 		}
@@ -150,4 +155,18 @@ func main() {
 	mounter.WaitGroup.Wait()
 
 	klog.Info("exiting sidecar mounter...")
+}
+
+func fetchMapFromFilePath(filePath string) (error, map[string]string) {
+	_, err := os.Stat(filePath)
+	if err != nil {
+		return err, nil
+	}
+	machineTypeBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		return err, nil
+	}
+	fileContent := string(machineTypeBytes)
+	flagsFromDriver := driver.ParseFlagMapFromFlagFile(fileContent)
+	return nil, flagsFromDriver
 }
