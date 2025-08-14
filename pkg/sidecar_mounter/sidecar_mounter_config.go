@@ -62,6 +62,7 @@ type MountConfig struct {
 	FlagMap                            map[string]string     `json:"-"`
 	ConfigFileFlagMap                  map[string]string     `json:"-"`
 	TokenServerIdentityProvider        string                `json:"-"`
+	HostNetworkKSAOptIn                bool                  `json:"-"`
 	PodNamespace                       string                `json:"-"`
 	ServiceAccountName                 string                `json:"-"`
 	EnableSidecarBucketAccessCheckFlag bool                  `json:"-"`
@@ -112,7 +113,7 @@ var boolFlags = map[string]bool{
 // 2. The file descriptor
 // 3. GCS bucket name
 // 4. Mount options passing to gcsfuse (passed by the csi mounter).
-func NewMountConfig(sp string, defaultingFlagMapFromDriver map[string]string, flagMapFromDriver map[string]string) *MountConfig {
+func NewMountConfig(sp string, flagMapFromDriver map[string]string) *MountConfig {
 	// socket path pattern: /gcsfuse-tmp/.volumes/<volume-name>/socket
 	tempDir := filepath.Dir(sp)
 	volumeName := filepath.Base(tempDir)
@@ -161,7 +162,7 @@ func NewMountConfig(sp string, defaultingFlagMapFromDriver map[string]string, fl
 	}
 
 	mc.prepareMountArgs()
-	mergeFlags(mc.ConfigFileFlagMap, defaultingFlagMapFromDriver)
+	mergeFlags(mc.ConfigFileFlagMap, flagMapFromDriver)
 	if err := mc.prepareConfigFile(); err != nil {
 		mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to create config file %q: %v", mc.ConfigFile, err))
 

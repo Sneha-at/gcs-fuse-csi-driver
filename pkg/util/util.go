@@ -183,7 +183,6 @@ func GetSocketBasePath(targetPath, fuseSocketDir string) string {
 	return filepath.Join(fuseSocketDir, sha1Hash(podID+"_"+volumeName))
 }
 
-<<<<<<< HEAD
 func CheckAndDeleteStaleFile(dirPath, fileName string) error {
 	filePath := filepath.Join(dirPath, fileName)
 
@@ -209,12 +208,11 @@ func CheckAndDeleteStaleFile(dirPath, fileName string) error {
 	klog.Infof("Stale file '%s' successfully deleted", fileName)
 
 	return nil
-=======
+}
 func ParseStringToBool(s string) (bool, error) {
 	b, err := strconv.ParseBool(s)
 	if err != nil {
 		return b, err
 	}
 	return b, nil
->>>>>>> ba7c1af2 (add bucket access check to sidecar)
 }

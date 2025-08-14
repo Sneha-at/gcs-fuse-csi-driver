@@ -18,8 +18,6 @@ limitations under the License.
 package sidecarmounter
 
 import (
-	"GoogleCloudPlatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
-	"GoogleCloudPlatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	"bufio"
 	"context"
 	"encoding/json"
@@ -35,6 +33,9 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 
 	"cloud.google.com/go/compute/metadata"
 	credentials "cloud.google.com/go/iam/credentials/apiv1"
@@ -78,12 +79,13 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 		if mc.TokenServerIdentityProvider != "" {
 			klog.V(4).Infof("Pod has hostNetwork enabled and token server feature is supported and opted in. Starting Token Server on %s/%s", mc.TempDir, TokenFileName)
 			go StartTokenServer(ctx, mc.TempDir, TokenFileName, m.tokenManager)
-	} else {
+		} else {
 			return fmt.Errorf("HostNetwork Pod KSA feature is opted in, but token server identity provider is not set. Please set it in VolumeAttributes")
 		}
+	}
 	if mc.EnableSidecarBucketAccessCheckFlag {
 		tokenSource = m.fetchTokenSource(mc.ServiceAccountName, mc.PodNamespace)
-		
+
 		storageService, err := m.prepareStorageServiceWithRetry(ctx, m.storageServiceManager, tokenSource, m.tokenManager)
 		if err != nil {
 			return status.Errorf(codes.Unauthenticated, "failed to prepare storage service, failed with error: %v", err)
@@ -419,30 +421,15 @@ func fetchStsToken(ctx context.Context, tm auth.TokenManager) (*oauth2.Token, er
 	return stsToken, nil
 }
 
-func getStsTokenWithRetry(ctx context.Context, kubeClient *kubernetes.Clientset, nodeName string) (*v1.Node, error) {
-	var nodeObj *v1.Node
-	backoff := wait.Backoff{
-		Duration: 1 * time.Second,
-		Factor:   2.0,
-		Steps:    5,
-	}
-	err := wait.ExponentialBackoffWithContext(ctx, backoff, func(_ context.Context) (bool, error) {
-		node, err := kubeClient.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
-		if err != nil {
-			klog.Warningf("Error getting node %s: %v, retrying...\n", nodeName, err)
-			return false, nil
-		}
-		nodeObj = node
-		klog.V(4).Infof("Successfully retrieved node info %s\n", nodeName)
-		return true, nil
-	})
-
+func StartTokenServer(ctx context.Context, tokenURLBasePath, tokenSocketName string, tm auth.TokenManager) {
+	// Clean up any stale socket file before creating a new one.
+	err := util.CheckAndDeleteStaleFile(tokenURLBasePath, tokenSocketName)
 	if err != nil {
-		klog.Errorf("Failed to get node %s after retries: %v\n", nodeName, err)
-	}
-	return nodeObj, err
+		klog.Errorf("failed to check and delete stale token server socket file: %v", err)
 
-func StartTokenServer(ctx context.Context, tokenURLSocketPath string, identityProvider string) {
+		return
+	}
+
 	// Create a unix domain socket and listen for incoming connections.
 	tokenURLSocketPath := filepath.Join(tokenURLBasePath, tokenSocketName)
 	tokenSocketListener, err := net.Listen("unix", tokenURLSocketPath)

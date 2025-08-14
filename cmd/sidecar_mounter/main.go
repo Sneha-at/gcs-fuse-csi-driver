@@ -78,27 +78,24 @@ func main() {
 	}
 	mounter := sidecarmounter.New(*gcsfusePath, tm, ssm)
 	ctx, cancel := context.WithCancel(context.Background())
-
+	flagsFromDriver := map[string]string{}
 	defaultingFlagFilePath := *volumeBasePath + "/" + driver.FlagFileForDefaultingPath
 	klog.Infof("Checking if defaulting-flag file %q exists", defaultingFlagFilePath)
-	err, defaultingFlagsFromDriver := fetchMapFromFilePath(defaultingFlagFilePath)
-	if err != nil {
-		klog.Fatalf("error reading file content for %s, got err %v", defaultingFlagFilePath, err)
+	if _, err := os.Stat(defaultingFlagFilePath); err == nil {
+		machineTypeBytes, err := os.ReadFile(defaultingFlagFilePath)
+		if err != nil {
+			klog.Fatalf("failed to read defaulting-flag file: %v", err)
+		}
+		fileContent := string(machineTypeBytes)
+		flagsFromDriver = driver.ParseFlagMapFromFlagFile(fileContent)
 	}
-
-	// sidecarFlagFilePath := *volumeBasePath + "/" + driver.SidecarFlagFilePath
-	// klog.Infof("Checking if sidecar-driver flag file %q exists", sidecarFlagFilePath)
-	// err, sidecarFlagsFromDriver := fetchMapFromFilePath(sidecarFlagFilePath)
-	// if err != nil {
-	// 	klog.Fatalf("error reading file content for %s, got err %v", sidecarFlagFilePath, err)
-	// }
 	for _, sp := range socketPaths {
 		klog.V(4).Infof("in sidecar mounter, found socket path %s", sp)
 		// sleep 1.5 seconds before launch the next gcsfuse to avoid
 		// 1. different gcsfuse logs mixed together.
 		// 2. memory usage peak.
 		time.Sleep(1500 * time.Millisecond)
-		mc := sidecarmounter.NewMountConfig(sp, defaultingFlagsFromDriver)
+		mc := sidecarmounter.NewMountConfig(sp, flagsFromDriver)
 		if mc != nil {
 			if err := mounter.Mount(ctx, mc); err != nil {
 				mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to mount bucket %q for volume %q: %v\n", mc.BucketName, mc.VolumeName, err))
@@ -155,18 +152,4 @@ func main() {
 	mounter.WaitGroup.Wait()
 
 	klog.Info("exiting sidecar mounter...")
-}
-
-func fetchMapFromFilePath(filePath string) (error, map[string]string) {
-	_, err := os.Stat(filePath)
-	if err != nil {
-		return err, nil
-	}
-	machineTypeBytes, err := os.ReadFile(filePath)
-	if err != nil {
-		return err, nil
-	}
-	fileContent := string(machineTypeBytes)
-	flagsFromDriver := driver.ParseFlagMapFromFlagFile(fileContent)
-	return nil, flagsFromDriver
 }

@@ -70,7 +70,6 @@ const (
 	tokenServerSidecarMinVersion           = "v1.17.2-gke.0" // #nosec G101
 	MachineTypeAutoConfigSidecarMinVersion = "v1.15.1-gke.0" // #nosec G101
 	FlagFileForDefaultingPath              = "flags-for-defaulting"
-	SidecarFlagFilePath                    = "flags-from-driver"
 )
 
 var (

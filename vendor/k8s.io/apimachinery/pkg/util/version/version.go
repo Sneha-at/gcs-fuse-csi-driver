@@ -339,7 +339,6 @@ func (v *Version) compareInternal(other *Version) int {
 
 	vLen := len(v.components)
 	oLen := len(other.components)
-	fmt.Printf("Got oLen %v and vLen %v and components %v and %v", oLen, vLen, v.components, other.components)
 	for i := 0; i < vLen && i < oLen; i++ {
 		switch {
 		case other.components[i] < v.components[i]:
@@ -348,8 +347,6 @@ func (v *Version) compareInternal(other *Version) int {
 			return -1
 		}
 	}
-
-	fmt.Printf("returning after here 1")
 
 	// If components are common but one has more items and they are not zeros, it is bigger
 	switch {
