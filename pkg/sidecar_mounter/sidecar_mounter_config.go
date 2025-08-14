@@ -18,7 +18,6 @@ limitations under the License.
 package sidecarmounter
 
 import (
-	"GoogleCloudPlatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,6 +28,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
