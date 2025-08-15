@@ -18,9 +18,6 @@ limitations under the License.
 package main
 
 import (
-	"GoogleCloudPlatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
-	"GoogleCloudPlatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
-	"GoogleCloudPlatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"context"
 	"flag"
 	"fmt"
@@ -31,7 +28,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	driver "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/csi_driver"
 	sidecarmounter "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/sidecar_mounter"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
@@ -43,8 +40,6 @@ var (
 	volumeBasePath            = flag.String("volume-base-path", webhook.SidecarContainerTmpVolumeMountPath+"/.volumes", "volume base path")
 	_                         = flag.Int("grace-period", 0, "grace period for gcsfuse termination. This flag has been deprecated, has no effect and will be removed in the future.")
 	kubeconfigPath            = flag.String("kubeconfig-path", "", "The kubeconfig path.")
-	identityPool              = flag.String("identity-pool", "", "The Identity Pool to authenticate with GCS API.")
-	identityProvider          = flag.String("identity-provider", "", "The Identity Provider to authenticate with GCS API.")
 	informerResyncDurationSec = flag.Int("informer-resync-duration-sec", 1800, "informer resync duration in seconds")
 	// This is set at compile time.
 	version = "unknown"
@@ -65,18 +60,7 @@ func main() {
 	if err != nil {
 		klog.Fatalf("Failed to configure k8s client: %v", err)
 	}
-
-	meta, err := metadata.NewMetadataService(*identityPool, *identityProvider)
-	if err != nil {
-		klog.Fatalf("Failed to set up metadata service: %v", err)
-	}
-
-	tm := auth.NewTokenManager(meta, clientset)
-	ssm, err := storage.NewGCSServiceManager()
-	if err != nil {
-		klog.Fatalf("Failed to set up storage service manager: %v", err)
-	}
-	mounter := sidecarmounter.New(*gcsfusePath, tm, ssm)
+	mounter := sidecarmounter.New(*gcsfusePath)
 	ctx, cancel := context.WithCancel(context.Background())
 	flagsFromDriver := map[string]string{}
 	defaultingFlagFilePath := *volumeBasePath + "/" + driver.FlagFileForDefaultingPath
@@ -97,6 +81,14 @@ func main() {
 		time.Sleep(1500 * time.Millisecond)
 		mc := sidecarmounter.NewMountConfig(sp, flagsFromDriver)
 		if mc != nil {
+			if mc.EnableSidecarBucketAccessCheckFlag {
+				tm, ssm, err := mounter.SetupTokenAndStorageManager(clientset, mc)
+				if err != nil {
+					klog.Errorf("Failed to fetch identity pool and identity provider details required for bucket access check, got error %q", err)
+				}
+				mounter.TokenManager = tm
+				mounter.StorageServiceManager = ssm
+			}
 			if err := mounter.Mount(ctx, mc); err != nil {
 				mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to mount bucket %q for volume %q: %v\n", mc.BucketName, mc.VolumeName, err))
 			}

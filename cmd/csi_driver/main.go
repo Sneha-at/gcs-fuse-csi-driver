@@ -50,7 +50,7 @@ var (
 	maximumNumberOfCollectors          = flag.Int("max-metric-collectors", -1, "Maximum number of prometheus metric collectors exporting metrics at a time, less than 0 (e.g -1) means no limit.")
 	disableAutoconfig                  = flag.Bool("disable-autoconfig", false, "Disable gcsfuse's defaulting based on machine type")
 	wiNodeLabelCheck                   = flag.Bool("wi-node-label-check", true, "Workload Identity node label check")
-	enableSidecarBucketAccessCheckFlag = flag.Bool("sidecar-bucket-access-check-flag", false, "Enable bucket access check on sidecar, this does not disable bucket access check in node driver")
+	enableSidecarBucketAccessCheckFlag = flag.Bool("enable-sidecar-bucket-access-check-flag", false, "Enable bucket access check on sidecar, this does not disable bucket access check in node driver")
 
 	// These are set at compile time.
 	version = "unknown"
@@ -119,19 +119,19 @@ func main() {
 	}
 
 	config := &driver.GCSDriverConfig{
-		Name:                           driver.DefaultName,
-		Version:                        version,
-		NodeID:                         *nodeID,
-		RunController:                  *runController,
-		RunNode:                        *runNode,
-		StorageServiceManager:          ssm,
-		TokenManager:                   tm,
-		Mounter:                        mounter,
-		K8sClients:                     clientset,
-		MetricsManager:                 mm,
-		DisableAutoconfig:              *disableAutoconfig,
-		WINodeLabelCheck:               *wiNodeLabelCheck,
-		EnableSidecarBucketAccessCheck: *enableSidecarBucketAccessCheckFlag,
+		Name:                               driver.DefaultName,
+		Version:                            version,
+		NodeID:                             *nodeID,
+		RunController:                      *runController,
+		RunNode:                            *runNode,
+		StorageServiceManager:              ssm,
+		TokenManager:                       tm,
+		Mounter:                            mounter,
+		K8sClients:                         clientset,
+		MetricsManager:                     mm,
+		DisableAutoconfig:                  *disableAutoconfig,
+		WINodeLabelCheck:                   *wiNodeLabelCheck,
+		EnableSidecarBucketAccessCheckFlag: *enableSidecarBucketAccessCheckFlag,
 	}
 
 	gcfsDriver, err := driver.NewGCSDriver(config)

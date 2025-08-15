@@ -35,10 +35,12 @@ import (
 	"time"
 
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
+	csimetadata "github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/metadata"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 
 	"cloud.google.com/go/compute/metadata"
 	credentials "cloud.google.com/go/iam/credentials/apiv1"
+	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/clientset"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/metrics"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
@@ -57,38 +59,37 @@ const metricEndpointFmt = "http://localhost:%v/metrics"
 type Mounter struct {
 	mounterPath           string
 	WaitGroup             sync.WaitGroup
-	tokenManager          auth.TokenManager
-	storageServiceManager storage.ServiceManager
+	TokenManager          auth.TokenManager
+	StorageServiceManager storage.ServiceManager
 }
 
 // New returns a Mounter for the current system.
 // It provides an option to specify the path to gcsfuse binary.
-func New(mounterPath string, tokenManager auth.TokenManager, storageServiceManager storage.ServiceManager) *Mounter {
+func New(mounterPath string) *Mounter {
 	return &Mounter{
-		mounterPath:           mounterPath,
-		tokenManager:          tokenManager,
-		storageServiceManager: storageServiceManager,
+		mounterPath: mounterPath,
 	}
 }
 
 func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
-	var tokenSource oauth2.TokenSource
 	// Start the token server for HostNetwork enabled pods.
 	// For managed sidecar, the token server identity provider is only populated when host network pod ksa feature is opted in.
 	if mc.HostNetworkKSAOptIn {
 		if mc.TokenServerIdentityProvider != "" {
 			klog.V(4).Infof("Pod has hostNetwork enabled and token server feature is supported and opted in. Starting Token Server on %s/%s", mc.TempDir, TokenFileName)
-			go StartTokenServer(ctx, mc.TempDir, TokenFileName, m.tokenManager)
+			go StartTokenServer(ctx, mc.TempDir, TokenFileName, m.TokenManager)
 		} else {
 			return fmt.Errorf("HostNetwork Pod KSA feature is opted in, but token server identity provider is not set. Please set it in VolumeAttributes")
 		}
 	}
 	if mc.EnableSidecarBucketAccessCheckFlag {
-		tokenSource = m.fetchTokenSource(mc.ServiceAccountName, mc.PodNamespace)
-
-		storageService, err := m.prepareStorageServiceWithRetry(ctx, m.storageServiceManager, tokenSource, m.tokenManager)
+		err, tokenSource := m.fetchTokenSource(mc.ServiceAccountName, mc.PodNamespace)
 		if err != nil {
-			return status.Errorf(codes.Unauthenticated, "failed to prepare storage service, failed with error: %v", err)
+			return fmt.Errorf("Failed to create token source, got error %q", err)
+		}
+		storageService, err := m.prepareStorageServiceWithRetry(ctx, m.StorageServiceManager, tokenSource, m.TokenManager)
+		if err != nil {
+			return status.Errorf(codes.Unauthenticated, "failed to prepare storage service for service-account %s and namespace %s, failed with error: %v", mc.ServiceAccountName, mc.PodNamespace, err)
 		}
 
 		if exist, err := storageService.CheckBucketExists(ctx, &storage.ServiceBucket{Name: mc.BucketName}); !exist {
@@ -187,12 +188,12 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 	return nil
 }
 
-func (m *Mounter) fetchTokenSource(serviceAccountName, podNamespace string) oauth2.TokenSource {
+func (m *Mounter) fetchTokenSource(serviceAccountName, podNamespace string) (error, oauth2.TokenSource) {
 	k8stoken, err := getK8sTokenFromFile(webhook.SidecarContainerSATokenVolumeMountPath + "/" + webhook.K8STokenPath)
 	if err != nil {
-		klog.Errorf("failed to get k8s token from path %v", err)
+		return fmt.Errorf("failed to get k8s token from path %v", err), nil
 	}
-	return m.tokenManager.GetTokenSourceFromK8sServiceAccount(podNamespace, serviceAccountName, k8stoken)
+	return nil, m.TokenManager.GetTokenSourceFromK8sServiceAccount(podNamespace, serviceAccountName, k8stoken)
 }
 
 // logMemoryUsage logs gcsfuse process VmRSS (Resident Set Size) usage every 30 seconds.
@@ -488,10 +489,10 @@ func (m *Mounter) prepareStorageServiceWithRetry(ctx context.Context, storageSer
 			klog.Errorf("error fetching initial token: %v", err)
 			return false, err
 		}
-		ss, err := m.storageServiceManager.SetupStorageServiceForSidecar(ctx, tokenSource)
+		ss, err := m.StorageServiceManager.SetupStorageServiceForSidecar(ctx, tokenSource)
 		if err != nil {
-			klog.Warningf("Failed to setup storage service for namespace %v, service account %s, retrying...", util.VolumeContextKeyPodNamespace, util.VolumeContextKeyServiceAccountName)
-			return false, err
+			klog.Warningf("Failed to setup storage service got error %q, retrying...", err)
+			return false, nil
 		}
 		storageService = ss
 		return true, nil
@@ -501,4 +502,21 @@ func (m *Mounter) prepareStorageServiceWithRetry(ctx context.Context, storageSer
 	}
 	klog.Infof("Successfully setup storage service")
 	return storageService, err
+}
+
+func (m *Mounter) SetupTokenAndStorageManager(clientset clientset.Interface, mc *MountConfig) (auth.TokenManager, storage.ServiceManager, error) {
+	if mc.IdentityPool != "" && mc.TokenServerIdentityProvider != "" {
+		meta, err := csimetadata.NewMetadataService(mc.IdentityPool, mc.TokenServerIdentityProvider)
+		if err != nil {
+			return nil, nil, fmt.Errorf("Failed to set up metadata service: %v for identity pool %s and identity provider %s", err, mc.IdentityPool, mc.TokenServerIdentityProvider)
+		}
+
+		tm := auth.NewTokenManager(meta, clientset)
+		ssm, err := storage.NewGCSServiceManager()
+		if err != nil {
+			return nil, nil, fmt.Errorf("Failed to set up storage service manager, got error: %v for identity pool %s and identity provider %s", err, mc.IdentityPool, mc.TokenServerIdentityProvider)
+		}
+		return tm, ssm, nil
+	}
+	return nil, nil, fmt.Errorf("Either of identity-pool %s or identity-provider %s were not provided", mc.IdentityPool, mc.TokenServerIdentityProvider)
 }

@@ -87,7 +87,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Validate arguments
-	targetPath, bucketName, userSpecifiedIdentityProvider, fuseMountOptions, skipBucketAccessCheck, disableMetricsCollection, optInHostnetworkKSA, err := parseRequestArguments(req)
+	targetPath, bucketName, userSpecifiedIdentityProvider, identityPool, fuseMountOptions, skipBucketAccessCheck, disableMetricsCollection, optInHostnetworkKSA, err := parseRequestArguments(req)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -133,7 +133,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	// Check if the sidecar container was injected into the Pod
-	pod, err := s.k8sClients.GetPod(vc[util.VolumeContextKeyPodNamespace], vc[util.VolumeContextKeyPodName])
+	pod, err := s.k8sClients.GetPod(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyPodName])
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "failed to get pod: %v", err)
 	}
@@ -145,15 +145,15 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		} else {
 			identityProvider = s.driver.config.TokenManager.GetIdentityProvider()
 		}
-		klog.V(6).Infof("NodePublishVolume populating identity provider %q in mount options", identityProvider)
-		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"hnw-ksa=true", "token-server-identity-provider=" + identityProvider})
+		klog.V(6).Infof("NodePublishVolume populating identity provider %q and identity pool %q in mount options", identityProvider, identityPool)
+		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{"hnw-ksa=true", "token-server-identity-provider=" + identityProvider, "identity-pool=" + identityPool})
 	}
 
 	if s.driver.config.EnableSidecarBucketAccessCheckFlag {
 		fuseMountOptions = joinMountOptions(fuseMountOptions, []string{
-			"pod-namespace=" + vc[util.VolumeContextKeyPodNamespace],
-			"service-account-name=" + vc[util.VolumeContextKeyServiceAccountName],
-			"enable-sidecar-bucket-access-check=" + strconv.FormatBool(s.driver.config.EnableSidecarBucketAccessCheckFlag)})
+			"pod-namespace=" + vc[VolumeContextKeyPodNamespace],
+			"service-account-name=" + vc[VolumeContextKeyServiceAccountName],
+			"enable-sidecar-bucket-access-check-flag=" + strconv.FormatBool(s.driver.config.EnableSidecarBucketAccessCheckFlag)})
 	}
 
 	node, err := s.k8sClients.GetNode(s.driver.config.NodeID)
@@ -332,7 +332,7 @@ func (s *nodeServer) isDirMounted(targetPath string) (bool, error) {
 
 // prepareStorageService prepares the GCS Storage Service using the Kubernetes Service Account from VolumeContext.
 func (s *nodeServer) prepareStorageService(ctx context.Context, vc map[string]string) (storage.Service, error) {
-	ts := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(vc[util.VolumeContextKeyPodNamespace], vc[util.VolumeContextKeyServiceAccountName], vc[util.VolumeContextKeyServiceAccountToken])
+	ts := s.driver.config.TokenManager.GetTokenSourceFromK8sServiceAccount(vc[VolumeContextKeyPodNamespace], vc[VolumeContextKeyServiceAccountName], vc[VolumeContextKeyServiceAccountToken])
 	storageService, err := s.storageServiceManager.SetupService(ctx, ts)
 	if err != nil {
 		return nil, fmt.Errorf("storage service manager failed to setup service: %w", err)

@@ -46,7 +46,7 @@ type GCSDriverConfig struct {
 	K8sClients                         clientset.Interface
 	MetricsManager                     metrics.Manager
 	DisableAutoconfig                  bool
-	enableSidecarBucketAccessCheckFlag bool
+	EnableSidecarBucketAccessCheckFlag bool
 	WINodeLabelCheck                   bool
 }
 

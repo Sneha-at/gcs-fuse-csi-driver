@@ -28,8 +28,6 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/auth"
-	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/cloud_provider/storage"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/util"
 	"github.com/googlecloudplatform/gcs-fuse-csi-driver/pkg/webhook"
 	"gopkg.in/yaml.v3"
@@ -66,13 +64,7 @@ type MountConfig struct {
 	PodNamespace                       string                `json:"-"`
 	ServiceAccountName                 string                `json:"-"`
 	EnableSidecarBucketAccessCheckFlag bool                  `json:"-"`
-}
-
-type MountArgs struct {
-	MountConfig          MountConfig
-	StorageServiceClient auth.TokenManager
-	TokenAuthManager     storage.ServiceManager
-	HostNetworkKSAOptIn  bool `json:"-"`
+	IdentityPool                       string                `json:"-"`
 }
 
 var prometheusPort = 62990
@@ -261,7 +253,7 @@ func (mc *MountConfig) prepareMountArgs() {
 		}
 
 		if flag == enableSidecarBucketAccessCheckFlag {
-			err, v := util.ParseStringToBool(value)
+			v, err := util.ParseStringToBool(value)
 			if err != nil {
 				klog.Warningf("Failed to parse value for flag %s, skipping setting the flag value", enableSidecarBucketAccessCheckFlag)
 			} else {
