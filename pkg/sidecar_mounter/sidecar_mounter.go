@@ -416,7 +416,7 @@ func fetchStsToken(ctx context.Context, tm auth.TokenManager) (*oauth2.Token, er
 	}
 	stsToken, err = fetchIdentityBindingToken(ctx, k8stoken, tm)
 	if err != nil {
-		klog.Errorf("failed to get sts token from path %v", err)
+		klog.Errorf("failed to get sts token %v", err)
 		return nil, err
 	}
 	return stsToken, nil
@@ -477,46 +477,59 @@ func StartTokenServer(ctx context.Context, tokenURLBasePath, tokenSocketName str
 // prepareStorageService prepares the GCS Storage 	Service using the Kubernetes Service Account from VolumeContext.
 func (m *Mounter) prepareStorageServiceWithRetry(ctx context.Context, storageServiceManager storage.ServiceManager, tokenSource oauth2.TokenSource, tm auth.TokenManager) (storage.Service, error) {
 	backoff := wait.Backoff{
-		Duration: 1 * time.Second,
+		Duration: 5 * time.Second,
 		Factor:   2.0,
 		Cap:      60 * time.Minute,
 		Jitter:   0.1, // Adds randomness, this will give +/- 10% of the current delay
 	}
+	if deadline, ok := ctx.Deadline(); ok {
+		klog.Infof("Context deadline before backoff: %v, Time now: %v", deadline, time.Now())
+	} else {
+		klog.Info("Context has no deadline before backoff.")
+	}
+	if ctx.Err() != nil {
+		klog.Errorf("Context error before backoff: %v", ctx.Err())
+	}
 	var storageService storage.Service
-	err := wait.ExponentialBackoffWithContext(ctx, backoff, func(_ context.Context) (bool, error) {
+	err := wait.ExponentialBackoffWithContext(ctx, backoff, func(ctx context.Context) (bool, error) {
+		klog.Info("Attempting to fetch token and setup storage service...")
 		// Verify token exchange before attempting storage client creation, token exchange might cause issues in storage API calls if not verified
-		if _, err := fetchStsToken(ctx, tm); err != nil {
-			klog.Errorf("error fetching initial token: %v", err)
-			return false, err
+		token, err := fetchStsToken(ctx, tm)
+		if err != nil {
+			klog.Errorf("error fetching initial token: %v, retrying...", err)
+			return false, nil
 		}
+		klog.Warningf("Got token %+v", token)
 		ss, err := m.StorageServiceManager.SetupStorageServiceForSidecar(ctx, tokenSource)
 		if err != nil {
 			klog.Warningf("Failed to setup storage service got error %q, retrying...", err)
 			return false, nil
 		}
+		klog.Infof("Got storage service %v", ss)
 		storageService = ss
 		return true, nil
 	})
 	if err != nil {
+		klog.Warningf("Returning from here, gor error %v and storage service %v", err, storageService)
 		return nil, err
 	}
 	klog.Infof("Successfully setup storage service")
-	return storageService, err
+	return storageService, nil
 }
 
 func (m *Mounter) SetupTokenAndStorageManager(clientset clientset.Interface, mc *MountConfig) (auth.TokenManager, storage.ServiceManager, error) {
-	if mc.IdentityPool != "" && mc.TokenServerIdentityProvider != "" {
-		meta, err := csimetadata.NewMetadataService(mc.IdentityPool, mc.TokenServerIdentityProvider)
+	if mc.TokenServerIdentityPool != "" && mc.TokenServerIdentityProvider != "" {
+		meta, err := csimetadata.NewMetadataService(mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider)
 		if err != nil {
-			return nil, nil, fmt.Errorf("Failed to set up metadata service: %v for identity pool %s and identity provider %s", err, mc.IdentityPool, mc.TokenServerIdentityProvider)
+			return nil, nil, fmt.Errorf("Failed to set up metadata service: %v for identity pool %s and identity provider %s", err, mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider)
 		}
 
 		tm := auth.NewTokenManager(meta, clientset)
 		ssm, err := storage.NewGCSServiceManager()
 		if err != nil {
-			return nil, nil, fmt.Errorf("Failed to set up storage service manager, got error: %v for identity pool %s and identity provider %s", err, mc.IdentityPool, mc.TokenServerIdentityProvider)
+			return nil, nil, fmt.Errorf("Failed to set up storage service manager, got error: %v for identity pool %s and identity provider %s", err, mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider)
 		}
 		return tm, ssm, nil
 	}
-	return nil, nil, fmt.Errorf("Either of identity-pool %s or identity-provider %s were not provided", mc.IdentityPool, mc.TokenServerIdentityProvider)
+	return nil, nil, fmt.Errorf("Either of identity-pool %s or identity-provider %s were not provided", mc.TokenServerIdentityPool, mc.TokenServerIdentityProvider)
 }

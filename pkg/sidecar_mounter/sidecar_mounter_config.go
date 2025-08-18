@@ -40,6 +40,7 @@ const (
 	unixSocketBasePath                 = "unix://"
 	TokenFileName                      = "token.sock" // #nosec G101
 	identityProviderFlag               = "token-server-identity-provider"
+	identityPoolFlag                   = "token-server-identity-pool"
 	podNamespace                       = "pod-namespace"
 	serviceAccountName                 = "service-account-name"
 	enableSidecarBucketAccessCheckFlag = "enable-sidecar-bucket-access-check-flag"
@@ -64,7 +65,7 @@ type MountConfig struct {
 	PodNamespace                       string                `json:"-"`
 	ServiceAccountName                 string                `json:"-"`
 	EnableSidecarBucketAccessCheckFlag bool                  `json:"-"`
-	IdentityPool                       string                `json:"-"`
+	TokenServerIdentityPool            string                `json:"-"`
 }
 
 var prometheusPort = 62990
@@ -247,26 +248,26 @@ func (mc *MountConfig) prepareMountArgs() {
 			continue
 		}
 
+		if flag == identityPoolFlag {
+			mc.TokenServerIdentityPool = value
+			continue
+		}
+
 		if flag == hostNetworkKSAOptInFlag {
 			mc.HostNetworkKSAOptIn = value == util.TrueStr
 			continue
 		}
 
 		if flag == enableSidecarBucketAccessCheckFlag {
-			v, err := util.ParseStringToBool(value)
-			if err != nil {
-				klog.Warningf("Failed to parse value for flag %s, skipping setting the flag value", enableSidecarBucketAccessCheckFlag)
-			} else {
-				mc.EnableSidecarBucketAccessCheckFlag = v
-			}
+			mc.EnableSidecarBucketAccessCheckFlag = value == util.TrueStr
 			continue
 		}
 
 		if flag == podNamespace {
-			mc.PodNamespace = podNamespace
+			mc.PodNamespace = value
 		}
 		if flag == serviceAccountName {
-			mc.ServiceAccountName = serviceAccountName
+			mc.ServiceAccountName = value
 		}
 
 		switch {

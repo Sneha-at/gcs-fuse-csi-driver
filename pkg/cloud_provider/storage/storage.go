@@ -360,14 +360,16 @@ func (manager *gcsServiceManager) SetupStorageServiceForSidecar(ctx context.Cont
 		client := oauth2.NewClient(ctx, ts)
 		storageClient, err = storage.NewClient(ctx, option.WithHTTPClient(client))
 		if err != nil {
+			klog.Errorf("Errored while creating with tokensource %v", err)
 			return nil, err
 		}
 	} else {
 		storageClient, err = storage.NewClient(ctx)
 		if err != nil {
+			klog.Errorf("Errored while creating without tokensource %v", err)
 			return nil, err
 		}
 	}
-
+	klog.Warningf("Storage service client created successfully, %v", storageClient)
 	return &gcsService{storageClient: storageClient}, nil
 }
