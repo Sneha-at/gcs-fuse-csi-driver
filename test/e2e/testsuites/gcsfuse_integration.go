@@ -53,6 +53,7 @@ const (
 	testNameKernelListCache       = "kernel_list_cache"
 	testNameEnableStreamingWrites = "streaming_writes"
 	testNameInactiveStreamTimeout = "inactive_stream_timeout"
+	testNameRenameSymlink         = "rename_symlink"
 
 	testNamePrefixSucceed = "should succeed in "
 
@@ -195,6 +196,11 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		// GCSFuse inactive_stream_timeout tests are supported after v3.1.0.
 		if !v.AtLeast(version.MustParseSemantic("v3.1.0")) && testName == testNameInactiveStreamTimeout {
 			e2eskipper.Skipf("skip gcsfuse integration test %v for gcsfuse version %v", testNameInactiveStreamTimeout, v.String())
+		}
+
+		// GCSFuse rename_symlink tests are supported after v3.2.0.
+		if !v.AtLeast(version.MustParseSemantic("v3.2.0-gke.0")) && testName == testNameRenameSymlink {
+			e2eskipper.Skipf("skip gcsfuse integration test %v for gcsfuse version %v", testNameRenameSymlink, v.String())
 		}
 
 		// By default, use the test code in the same release tag branch
@@ -696,5 +702,11 @@ func (t *gcsFuseCSIGCSFuseIntegrationTestSuite) DefineTests(driver storageframew
 		init()
 		defer cleanup()
 		gcsfuseIntegrationTest(testNameInactiveStreamTimeout+":TestTimeoutEnabledSuite/TestReaderStaysOpenWithinTimeout", false, "read-inactive-stream-timeout=1s", "logging:format:json", fmt.Sprintf("logging:file-path:%s", inactive_stream_timeout_log_file), "log-severity=trace")
+	})
+
+	ginkgo.It(testNamePrefixSucceed+testNameRenameSymlink+testNameSuffix(1), func() {
+		init()
+		defer cleanup()
+		gcsfuseIntegrationTest(testNameRenameSymlink, false, "implicit-dirs=true", "metadata-cache-negative-ttl-secs=0")
 	})
 }
