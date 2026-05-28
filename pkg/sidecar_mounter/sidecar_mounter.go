@@ -101,7 +101,14 @@ func (m *Mounter) Mount(ctx context.Context, mc *MountConfig) error {
 		err := m.checkBucketAccessWithRetry(ctx, tokenSource, mc.BucketName, mc.TokenServerIdentityProvider, mc)
 		if err != nil {
 			return status.Errorf(codes.Unauthenticated, "failed to prepare storage service or check bucket access, failed with error: %v", err)
-		}
+		}	
+	}
+
+	// Clear the GCS Fuse error file after the sidecar bucket access check completes and just before the GCS Fuse mount starts.
+	// This ensures the NodePublish volume will always fail if the error persists until the GCS Fuse mount actually starts.
+	err := util.CheckAndDeleteStaleFile(mc.TempDir, util.ErrorFileName)
+	if err != nil {
+		klog.Errorf("failed to check and delete stale %s file: %v", util.ErrorFileName, err)
 	}
 
 	klog.Infof("start to mount bucket %q for volume %q", mc.BucketName, mc.VolumeName)

@@ -139,7 +139,7 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 		return err
 	}
 
-	// Clean up stale /error and /kernel-params.json file. We clean up the stale error file and the kernel-params.json file when the CSI driver is
+	// Clean up stale error and kernel-params.json files. We clean up the stale error file and the kernel-params.json file when the CSI driver is
 	// about to set up the mountpoint within NodePublishVolume call, and it is done just before the sidecar container and gcsfuse
 	// attempt to start up. Since gcsfuse cant start up without file descriptor, we ensure cleanup is done before we make the file descriptor available.
 	// We put this cleanup step here because:
@@ -153,9 +153,9 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 		klog.Errorf("failed to get emptyDir path: %v", err)
 	}
 
-	err = util.CheckAndDeleteStaleFile(emptyDirBasePath, "/error")
+	err = util.CheckAndDeleteStaleFile(emptyDirBasePath, util.ErrorFileName)
 	if err != nil {
-		klog.Errorf("failed to check and delete stale /error file: %v", err)
+		klog.Errorf("failed to check and delete stale %s file: %v", util.ErrorFileName, err)
 	}
 
 	err = util.CheckAndDeleteStaleFile(emptyDirBasePath, util.GCSFuseKernelParamsFileName)

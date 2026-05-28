@@ -117,6 +117,10 @@ func main() {
 					klog.Fatalf("Failed to fetch identity pool and identity provider details required for bucket access check, got error %v", err)
 				}
 			}
+			err := util.CheckAndDeleteStaleFile(mc.TempDir, util.ErrorFileName)
+			if err != nil {
+				klog.Errorf("failed to check and delete stale %s file: %v", util.ErrorFileName, err)
+			}
 			if err := mounter.Mount(ctx, mc); err != nil {
 				mc.ErrWriter.WriteMsg(fmt.Sprintf("failed to mount bucket %q for volume %q: %v\n", mc.BucketName, mc.VolumeName, err))
 			}
